@@ -1,0 +1,4 @@
+**/runs/
+**/tensorboard/
+**/wandb/
+**/*.zip
