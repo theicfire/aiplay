@@ -1,17 +1,17 @@
-import matplotlib
-import matplotlib.pyplot as plt
 import torch
 from torch import tensor
 import torch.nn as nn
 import torch.nn.functional as F
 import collections
 import random
+import matplotlib.pyplot as plt
+import matplotlib
 
 WORD_LEN = 8
 BATCH_SIZE = 32
-VOCAB_SIZE = 65
+VOCAB_SIZE = 65  # Where did 32 come from for C?
 # N_EMBD = 32
-NUM_STEPS = 10000
+NUM_STEPS = 1000
 VALIDATION_FRACTION = 0.8
 
 with open('input.txt', 'r') as f:
@@ -96,6 +96,26 @@ class BigramModel(nn.Module):
         # print('out sum', out[0, 0].sum())
         return logits, loss
 
+    def generate(self, vocab_dict, length):
+        # input is simply (T)
+        # output is (T, C)
+        current = torch.zeros((1, WORD_LEN), dtype=torch.int64)
+        ret = []
+        vocab_dict_reverse = {v: k for k, v in vocab_dict.items()}
+        for i in range(length):
+            logits = self.embedding(current)
+            # idx = logits[0][WORD_LEN - 1].argmax().item() # Pick stochastically instead
+            idx = torch.multinomial(
+                F.softmax(logits[0][WORD_LEN - 1], dim=0), 1).item()
+
+            ret.append(vocab_dict_reverse[idx])
+            current = torch.cat([current[:, 1:], torch.tensor([[idx]])], dim=1)
+
+        logits = self.embedding(current)
+        print('logits', logits[0][WORD_LEN - 1])
+        print('softmax', F.softmax(logits[0][WORD_LEN - 1], dim=0))
+        return ''.join(ret)
+
 # def loss_fn(output, target):
 #     target_one_hot = F.one_hot(target, num_classes=VOCAB_SIZE)
 #     # print(output.shape, target.shape, target_one_hot.shape)
@@ -140,4 +160,6 @@ print('train loss', loss)
 plt.plot(train_losses, label='train')
 plt.plot(valid_losses, label='valid')
 plt.legend()
-plt.show()
+# plt.show()
+
+print(model.generate(vocab_dict, 100))
