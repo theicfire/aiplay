@@ -82,6 +82,49 @@ def get_vocab(contents):
 
 
 DMODEL = 256
+DHEAD = 256
+DROPOUT_PERC = 0.2
+
+
+class Attention(nn.Module):
+    def __init__(self, dhead):
+        super().__init__()
+        self.k = nn.Linear(DMODEL, dhead)
+        self.q = nn.Linear(DMODEL, dhead)
+        self.v = nn.Linear(DMODEL, dhead)
+        self.dropout = nn.Dropout(DROPOUT_PERC)
+        self.register_buffer('tril', torch.tril(torch.ones(dhead, dhead)))
+
+    def forward(self, x):
+        # x is (B, T, DMODEL)
+        k = self.k(x)
+        q = self.q(x)
+        v = self.v(x)
+        mul1 = q @ k.transpose(-2, -1)  # or -1, -2.. same!
+        mul1 = mul1 / (DMODEL ** 0.5)
+        wei = mul1.masked_fill(self.tril[:] == 0, float('-inf'))
+        wei = F.softmax(wei, dim=-1)
+        wei = self.dropout(wei)
+        mul2 = wei @ v  # TODO am I multiplying correctly given tril?
+        # return (B, T, dhead)
+        return mul2
+
+
+class MultiAttention(nn.Module):
+    def __init__(self, n_heads=4):
+        super().__init__()
+        self.n_heads = n_heads  # TODO make the gradient here not be tracked
+        dhead = DHEAD / n_heads  # TODO confirm this is an even division
+        self.heads = [Attention(dhead) for i in range(n_heads)]
+        self.fc = nn.Linear(DHEAD, DMODEL)
+        self.dropout = nn.Dropout(DROPOUT_PERC)
+
+    def forward(self, x):
+        # x is (B, T, DMODEL)
+        out = torch.cat([h(x) for h in self.heads], dim=-1)
+
+        # return (B, T, DMODEL)
+        return self.dropout(self.fc(out))
 
 
 class GPT(nn.Module):
