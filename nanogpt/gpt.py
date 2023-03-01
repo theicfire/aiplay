@@ -81,18 +81,30 @@ def get_vocab(contents):
     return vocab_dict
 
 
-class BigramModel(nn.Module):
+DMODEL = 256
+
+
+class GPT(nn.Module):
     def __init__(self):
         super().__init__()
-        self.embedding = torch.nn.Embedding(VOCAB_SIZE, VOCAB_SIZE)
+        self.embedding = torch.nn.Embedding(VOCAB_SIZE, DMODEL)
+        self.pos_encoding = torch.nn.Embedding(WORD_LEN, DMODEL)
+        self.fc = nn.Linear(DMODEL, VOCAB_SIZE)
         # self.sm = nn.Softmax(dim=2)
         self.loss_fn = nn.CrossEntropyLoss()
 
-    def forward(self, input, target):
+    def forward(self, input, target, training=True):
         # input is (B, T)
         # output is (B, T, C)
-        logits = self.embedding(input)
-        loss = self.loss_fn(torch.permute(logits, (0, 2, 1)), target)
+        x = self.embedding(input)
+        pos = torch.zeros_like(input)
+        pos[:] = torch.tensor(range(WORD_LEN), dtype=torch.int64)
+        pos = self.pos_encoding(pos)
+        logits = self.fc(x + pos)
+        loss = None
+        if training:
+            loss = self.loss_fn(torch.permute(logits, (0, 2, 1)), target)
+
         # print('out sum', out[0, 0].sum())
         return logits, loss
 
@@ -103,7 +115,7 @@ class BigramModel(nn.Module):
         ret = []
         vocab_dict_reverse = {v: k for k, v in vocab_dict.items()}
         for i in range(length):
-            logits = self.embedding(current)
+            logits, _loss = self.forward(current, target=None, training=False)
             # idx = logits[0][WORD_LEN - 1].argmax().item() # Pick stochastically instead
             idx = torch.multinomial(
                 F.softmax(logits[0][WORD_LEN - 1], dim=0), 1).item()
@@ -112,8 +124,8 @@ class BigramModel(nn.Module):
             current = torch.cat([current[:, 1:], torch.tensor([[idx]])], dim=1)
 
         logits = self.embedding(current)
-        print('logits', logits[0][WORD_LEN - 1])
-        print('softmax', F.softmax(logits[0][WORD_LEN - 1], dim=0))
+        # print('logits', logits[0][WORD_LEN - 1])
+        # print('softmax', F.softmax(logits[0][WORD_LEN - 1], dim=0))
         return ''.join(ret)
 
 # def loss_fn(output, target):
@@ -127,7 +139,7 @@ class BigramModel(nn.Module):
 
 vocab_dict = get_vocab(contents)
 
-model = BigramModel()
+model = GPT()
 optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
 loss = None
 train_losses = []
