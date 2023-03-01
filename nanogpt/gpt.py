@@ -93,7 +93,9 @@ class Attention(nn.Module):
         self.q = nn.Linear(DMODEL, dhead)
         self.v = nn.Linear(DMODEL, dhead)
         self.dropout = nn.Dropout(DROPOUT_PERC)
-        self.register_buffer('tril', torch.tril(torch.ones(dhead, dhead)))
+        self.register_buffer('tril', torch.tril(
+            torch.ones(WORD_LEN, WORD_LEN)))
+        self.dhead = dhead  # TODO buffer?
 
     def forward(self, x):
         # x is (B, T, DMODEL)
@@ -101,7 +103,7 @@ class Attention(nn.Module):
         q = self.q(x)
         v = self.v(x)
         mul1 = q @ k.transpose(-2, -1)  # or -1, -2.. same!
-        mul1 = mul1 / (DMODEL ** 0.5)
+        mul1 = mul1 / (self.dhead ** 0.5)
         wei = mul1.masked_fill(self.tril[:] == 0, float('-inf'))
         wei = F.softmax(wei, dim=-1)
         wei = self.dropout(wei)
@@ -114,7 +116,7 @@ class MultiAttention(nn.Module):
     def __init__(self, n_heads=4):
         super().__init__()
         self.n_heads = n_heads  # TODO make the gradient here not be tracked
-        dhead = DHEAD / n_heads  # TODO confirm this is an even division
+        dhead = DHEAD // n_heads  # TODO confirm this is an even division
         self.heads = [Attention(dhead) for i in range(n_heads)]
         self.fc = nn.Linear(DHEAD, DMODEL)
         self.dropout = nn.Dropout(DROPOUT_PERC)
@@ -127,6 +129,37 @@ class MultiAttention(nn.Module):
         return self.dropout(self.fc(out))
 
 
+class FeedForward(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.fc1 = nn.Linear(DMODEL, 4 * DMODEL)
+        self.relu = nn.ReLU()
+        self.fc2 = nn.Linear(4 * DMODEL, DMODEL)
+        self.dropout = nn.Dropout(DROPOUT_PERC)
+
+    def forward(self, x):
+        x = self.fc1(x)
+        x = self.relu(x)
+        x = self.fc2(x)
+        return self.dropout(x)
+
+
+class Block(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.ff = FeedForward()
+        self.multi_attention = MultiAttention()
+        self.ln1 = nn.LayerNorm(DMODEL)
+        self.ln2 = nn.LayerNorm(DMODEL)
+
+    def forward(self, x):
+        x = x + self.multi_attention(self.ln1(x))
+        return x + self.ff(self.ln2(x))
+
+
+NUM_BLOCKS = 4
+
+
 class GPT(nn.Module):
     def __init__(self):
         super().__init__()
@@ -135,6 +168,8 @@ class GPT(nn.Module):
         self.fc = nn.Linear(DMODEL, VOCAB_SIZE)
         # self.sm = nn.Softmax(dim=2)
         self.loss_fn = nn.CrossEntropyLoss()
+        self.blocks = [Block() for _ in range(NUM_BLOCKS)]
+        self.ln = nn.LayerNorm(DMODEL)
 
     def forward(self, input, target, training=True):
         # input is (B, T)
@@ -143,7 +178,11 @@ class GPT(nn.Module):
         pos = torch.zeros_like(input)
         pos[:] = torch.tensor(range(WORD_LEN), dtype=torch.int64)
         pos = self.pos_encoding(pos)
-        logits = self.fc(x + pos)
+        x = x + pos
+        for b in self.blocks:
+            x = b(x)
+        x = self.ln(x)
+        logits = self.fc(x)
         loss = None
         if training:
             loss = self.loss_fn(torch.permute(logits, (0, 2, 1)), target)
