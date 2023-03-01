@@ -9,10 +9,14 @@ import matplotlib
 
 WORD_LEN = 8
 BATCH_SIZE = 32
-VOCAB_SIZE = 65  # Where did 32 come from for C?
-# N_EMBD = 32
+VOCAB_SIZE = 65
 NUM_STEPS = 1000
 VALIDATION_FRACTION = 0.8
+NUM_BLOCKS = 4
+DMODEL = 256
+DHEAD = 64
+DROPOUT_PERC = 0.2
+N_HEADS = 2
 
 with open('input.txt', 'r') as f:
     contents = f.read()
@@ -81,11 +85,6 @@ def get_vocab(contents):
     return vocab_dict
 
 
-DMODEL = 256
-DHEAD = 256
-DROPOUT_PERC = 0.2
-
-
 class Attention(nn.Module):
     def __init__(self, dhead):
         super().__init__()
@@ -98,35 +97,37 @@ class Attention(nn.Module):
         self.dhead = dhead  # TODO buffer?
 
     def forward(self, x):
-        # x is (B, T, DMODEL)
+        # assert(x.shape == (BATCH_SIZE, WORD_LEN, DMODEL))
         k = self.k(x)
+        B, T, dhead = k.shape
         q = self.q(x)
         v = self.v(x)
         mul1 = q @ k.transpose(-2, -1)  # or -1, -2.. same!
-        mul1 = mul1 / (self.dhead ** 0.5)
+        mul1 = mul1 / (dhead ** 0.5)
         wei = mul1.masked_fill(self.tril[:] == 0, float('-inf'))
         wei = F.softmax(wei, dim=-1)
         wei = self.dropout(wei)
         mul2 = wei @ v  # TODO am I multiplying correctly given tril?
-        # return (B, T, dhead)
         return mul2
 
 
 class MultiAttention(nn.Module):
-    def __init__(self, n_heads=4):
+    def __init__(self):
         super().__init__()
-        self.n_heads = n_heads  # TODO make the gradient here not be tracked
-        dhead = DHEAD // n_heads  # TODO confirm this is an even division
-        self.heads = [Attention(dhead) for i in range(n_heads)]
+        assert(DHEAD % N_HEADS == 0)
+        dhead = DHEAD // N_HEADS
+        self.heads = [Attention(dhead) for i in range(N_HEADS)]
         self.fc = nn.Linear(DHEAD, DMODEL)
         self.dropout = nn.Dropout(DROPOUT_PERC)
 
     def forward(self, x):
-        # x is (B, T, DMODEL)
+        # print('compare', x.shape, (BATCH_SIZE, WORD_LEN, DMODEL))
+        # assert(x.shape == (BATCH_SIZE, WORD_LEN, DMODEL))
         out = torch.cat([h(x) for h in self.heads], dim=-1)
 
-        # return (B, T, DMODEL)
-        return self.dropout(self.fc(out))
+        out = self.fc(out)
+        # assert(out.shape == (BATCH_SIZE, WORD_LEN, DMODEL))
+        return self.dropout(out)
 
 
 class FeedForward(nn.Module):
@@ -155,9 +156,6 @@ class Block(nn.Module):
     def forward(self, x):
         x = x + self.multi_attention(self.ln1(x))
         return x + self.ff(self.ln2(x))
-
-
-NUM_BLOCKS = 4
 
 
 class GPT(nn.Module):
